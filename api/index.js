@@ -20,10 +20,10 @@ app.all('*', async (req, res) => {
 
     const targetReqUrl = targetParams.url;
 
-    if (!ALLOWED_HOSTS.includes(targetReqUrl.hostname)) {
-        res.status(403).send(`Host '${targetReqUrl.hostname}' is not allowed`);
-        return;
-    }
+    // if (!ALLOWED_HOSTS.includes(targetReqUrl.hostname)) {
+    //     res.status(403).send(`Host '${targetReqUrl.hostname}' is not allowed`);
+    //     return;
+    // }
 
     const targetReqHandler = (targetRes) => {
         res.status(targetRes.statusCode);
