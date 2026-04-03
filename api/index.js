@@ -1,6 +1,6 @@
-import express from 'express';
-import * as http from "node:http";
-import * as https from "node:https";
+const express = require('express');
+const http = require('http');
+const https = require('https');
 
 const app = express();
 app.use(express.raw({ type: '*/*' }));
@@ -11,7 +11,7 @@ const ALLOWED_HOSTS = [
   'gutenberg.org',
 ];
 
-app.all('*', async (req, res) => {
+app.all('/*path', async (req, res) => {
     const targetParams = parseTargetParameters(req);
     if (!targetParams.url) {
         res.status(400).send("Provide target URL via '?url=' param or path: /https://...");
@@ -56,7 +56,13 @@ app.all('*', async (req, res) => {
 
 function request(url, options = {}, callback) {
     const httpModule = url.protocol === 'https:' ? https : http;
-    return httpModule.request(url, options, callback);
+    const requestOptions = {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        ...options
+    };
+    return httpModule.request(requestOptions, callback);
 }
 
 function parseTargetParameters(proxyRequest) {
@@ -82,4 +88,4 @@ function parseTargetParameters(proxyRequest) {
     return params;
 }
 
-export default app;
+module.exports = app;
