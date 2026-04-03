@@ -5,10 +5,23 @@ const https = require("https");
 const app = express();
 app.use(express.raw({ type: "*/*" }));
 
-// Whitelist: only allow gutenberg.org to prevent open proxy abuse
-const ALLOWED_HOSTS = ["www.gutenberg.org", "gutenberg.org"];
+const MAX_REDIRECTS = 10;
+
+function setCorsHeaders(res) {
+  res.setHeader("access-control-allow-origin", "*");
+  res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.setHeader("access-control-allow-headers", "*");
+  res.setHeader("access-control-expose-headers", "*");
+}
 
 async function proxyHandler(req, res) {
+  // Handle CORS preflight directly without forwarding
+  if (req.method === "OPTIONS") {
+    setCorsHeaders(res);
+    res.status(204).end();
+    return;
+  }
+
   const targetParams = parseTargetParameters(req);
   if (!targetParams.url) {
     res
@@ -17,21 +30,31 @@ async function proxyHandler(req, res) {
     return;
   }
 
-  const targetReqUrl = targetParams.url;
+  followRequest(targetParams.url, req, res, 0);
+}
 
-  // if (!ALLOWED_HOSTS.includes(targetReqUrl.hostname)) {
-  //     res.status(403).send(`Host '${targetReqUrl.hostname}' is not allowed`);
-  //     return;
-  // }
+function followRequest(targetReqUrl, req, res, redirectCount) {
+  if (redirectCount > MAX_REDIRECTS) {
+    setCorsHeaders(res);
+    res.status(502).json({ error: "Too many redirects" });
+    return;
+  }
 
   const targetReqHandler = (targetRes) => {
+    // Follow redirects server-side instead of passing them to the browser
+    if (
+      [301, 302, 303, 307, 308].includes(targetRes.statusCode) &&
+      targetRes.headers.location
+    ) {
+      const redirectUrl = new URL(targetRes.headers.location, targetReqUrl);
+      targetRes.resume(); // drain the response
+      followRequest(redirectUrl, req, res, redirectCount + 1);
+      return;
+    }
+
     res.status(targetRes.statusCode);
     res.setHeaders(new Map(Object.entries(targetRes.headersDistinct)));
-    res.setHeader("access-control-allow-origin", "*");
-    res.setHeader(
-      "access-control-allow-methods",
-      "GET,POST,PUT,DELETE,OPTIONS",
-    );
+    setCorsHeaders(res);
     res.removeHeader("cross-origin-resource-policy");
     res.removeHeader("content-security-policy");
     res.removeHeader("content-security-policy-report-only");
@@ -60,6 +83,7 @@ async function proxyHandler(req, res) {
     targetReq.write(req.body);
   }
   targetReq.on("error", (err) => {
+    setCorsHeaders(res);
     res.status(500).json({ error: "Proxy error", details: err.message });
   });
   targetReq.end();
