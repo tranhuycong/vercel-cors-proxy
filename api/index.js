@@ -3,24 +3,33 @@ import * as http from "node:http";
 import * as https from "node:https";
 
 const app = express();
-app.use(express.raw({ type: '*/*' })); // ensure body is a buffer
-app.all('/', async (req, res) => {
+app.use(express.raw({ type: '*/*' }));
+
+// Whitelist: only allow gutenberg.org to prevent open proxy abuse
+const ALLOWED_HOSTS = [
+  'www.gutenberg.org',
+  'gutenberg.org',
+];
+
+app.all('*', async (req, res) => {
     const targetParams = parseTargetParameters(req);
     if (!targetParams.url) {
-        res.status(400).send("query parameter 'url' is required");
+        res.status(400).send("Provide target URL via '?url=' param or path: /https://...");
         return;
     }
 
     const targetReqUrl = targetParams.url;
-    const targetReqHandler = (targetRes) => {
-        res.status(targetRes.statusCode)
 
+    if (!ALLOWED_HOSTS.includes(targetReqUrl.hostname)) {
+        res.status(403).send(`Host '${targetReqUrl.hostname}' is not allowed`);
+        return;
+    }
+
+    const targetReqHandler = (targetRes) => {
+        res.status(targetRes.statusCode);
         res.setHeaders(new Map(Object.entries(targetRes.headersDistinct)));
-        // set CORS headers
-        res.setHeader('origin', '*');
         res.setHeader('access-control-allow-origin', '*');
         res.setHeader('access-control-allow-methods', 'GET,POST,PUT,DELETE,OPTIONS');
-        // remove CORP headers
         res.removeHeader('cross-origin-resource-policy');
         res.removeHeader('content-security-policy');
         res.removeHeader('content-security-policy-report-only');
@@ -31,7 +40,8 @@ app.all('/', async (req, res) => {
         targetRes.on('end', () => res.end());
         targetRes.on('error', (err) => res.destroy(err));
     };
-    const targetReq = request(targetReqUrl, {method: req.method}, targetReqHandler);
+
+    const targetReq = request(targetReqUrl, { method: req.method }, targetReqHandler);
     targetReq.setHeaders(new Map(Object.entries(req.headersDistinct)
         .filter(([name]) => !name.startsWith('x-vercel-'))));
     targetReq.setHeader('host', targetReqUrl.host);
@@ -50,11 +60,23 @@ function request(url, options = {}, callback) {
 }
 
 function parseTargetParameters(proxyRequest) {
-    const params = {}
-    // url - treat everything right to url= query parameter as target url value
+    const params = {};
+
+    // Method 1: ?url= query parameter
     const urlMatch = proxyRequest.url.match(/(?<=[?&])url=(?<url>.*)$/);
     if (urlMatch) {
-        params.url = new URL(decodeURIComponent(urlMatch.groups.url));
+        try {
+            params.url = new URL(decodeURIComponent(urlMatch.groups.url));
+            return params;
+        } catch (_) {}
+    }
+
+    // Method 2: path-encoded URL, e.g. /https://www.gutenberg.org/ebooks/21.epub3.images
+    const pathMatch = proxyRequest.url.match(/^\/(https?:\/\/.+)$/);
+    if (pathMatch) {
+        try {
+            params.url = new URL(pathMatch[1]);
+        } catch (_) {}
     }
 
     return params;
